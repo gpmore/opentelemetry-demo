@@ -1,4 +1,4 @@
-name: Helm CI/CD Pipeline with ECR Images
+name: Helm CI/CD Pipeline with ECR and Java Agent Fix
 
 on:
   push:
@@ -14,6 +14,7 @@ env:
   RELEASE_NAME: otel-demo
   ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REPO: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-2.amazonaws.com/opentelemetry-demo
+  OTEL_JAVA_AGENT_VERSION: 1.33.0
 
 jobs:
   ci-cd:
@@ -28,11 +29,12 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-2
+          aws-region: ${{ env.REGION }}
 
       - name: Login to Amazon ECR
         run: |
-          aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
+          aws ecr get-login-password --region ${{ env.REGION }} | \
+          docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
 
       - name: Build and Push All Service Images to ECR
         run: |
@@ -40,8 +42,10 @@ jobs:
           for SERVICE in "${SERVICES[@]}"; do
             TAG="${{ github.sha }}-$SERVICE"
             DOCKERFILE_PATH=./src/$SERVICE/Dockerfile
-            echo "🔧 Building $SERVICE..."
-            docker build -t ${{ env.ECR_REPO }}:$TAG -f $DOCKERFILE_PATH .
+            echo "🔧 Building $SERVICE with $DOCKERFILE_PATH"
+            docker build -t ${{ env.ECR_REPO }}:$TAG \
+              -f $DOCKERFILE_PATH \
+              --build-arg OTEL_JAVA_AGENT_VERSION=${{ env.OTEL_JAVA_AGENT_VERSION }} .
             docker push ${{ env.ECR_REPO }}:$TAG
           done
 
@@ -68,7 +72,7 @@ jobs:
       - name: Generate values-ecr.yaml for Helm
         run: |
           COMMIT=${{ github.sha }}
-          ECR_REPO=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-2.amazonaws.com/opentelemetry-demo
+          ECR_REPO=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.REGION }}.amazonaws.com/${{ env.APP_NAME }}
           SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
 
           echo "# Auto-generated values file" > values-ecr.yaml
@@ -96,4 +100,6 @@ jobs:
       - name: Rollback on Failure
         if: failure()
         run: |
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
           helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
