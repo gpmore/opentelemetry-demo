@@ -1,4 +1,4 @@
-name: Helm CI/CD Pipeline with Tests (ECR)
+name: Helm CI/CD Pipeline with ECR Images
 
 on:
   push:
@@ -32,13 +32,18 @@ jobs:
 
       - name: Login to Amazon ECR
         run: |
-          aws ecr get-login-password --region us-east-2 | \
-          docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
+          aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
 
-      - name: Build and Push Docker Image to ECR
+      - name: Build and Push All Service Images to ECR
         run: |
-          docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
-          docker push ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+          SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
+          for SERVICE in "${SERVICES[@]}"; do
+            TAG="${{ github.sha }}-$SERVICE"
+            DOCKERFILE_PATH=./src/$SERVICE/Dockerfile
+            echo "🔧 Building $SERVICE..."
+            docker build -t ${{ env.ECR_REPO }}:$TAG -f $DOCKERFILE_PATH .
+            docker push ${{ env.ECR_REPO }}:$TAG
+          done
 
       - name: Install Dependencies for Testing
         run: |
@@ -60,12 +65,29 @@ jobs:
           helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
           helm repo update
 
+      - name: Generate values-ecr.yaml for Helm
+        run: |
+          COMMIT=${{ github.sha }}
+          ECR_REPO=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-2.amazonaws.com/opentelemetry-demo
+          SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
+
+          echo "# Auto-generated values file" > values-ecr.yaml
+          for SERVICE in "${SERVICES[@]}"; do
+            SERVICE_KEY=$(echo "$SERVICE" | sed 's/-//g')Service
+            echo "$SERVICE_KEY:" >> values-ecr.yaml
+            echo "  image:" >> values-ecr.yaml
+            echo "    repository: $ECR_REPO" >> values-ecr.yaml
+            echo "    tag: $COMMIT-$SERVICE" >> values-ecr.yaml
+            echo "" >> values-ecr.yaml
+          done
+
+          cat values-ecr.yaml
+
       - name: Deploy with Helm
         run: |
           helm upgrade --install ${{ env.RELEASE_NAME }} open-telemetry/opentelemetry-demo \
             --namespace ${{ env.NAMESPACE }} --create-namespace \
-            --set image.repository=${{ env.ECR_REPO }} \
-            --set image.tag=${{ env.IMAGE_TAG }}
+            -f values-ecr.yaml
 
       - name: Validate Deployment
         run: |
