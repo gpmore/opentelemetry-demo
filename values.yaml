@@ -964,4 +964,6 @@ opensearch:
   resources:
     limits:
       memory: 1100Mi
+fakeService:
+  invalidProperty: true
 
