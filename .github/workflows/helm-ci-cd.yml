@@ -39,10 +39,29 @@ jobs:
       - name: Build and Push All Service Images to ECR
         run: |
           SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
+
           for SERVICE in "${SERVICES[@]}"; do
             TAG="${{ github.sha }}-$SERVICE"
-            DOCKERFILE_PATH=./src/$SERVICE/Dockerfile
-            echo "🔧 Building $SERVICE with $DOCKERFILE_PATH"
+
+            case "$SERVICE" in
+              ad) DOCKERFILE_PATH=./src/ad/Dockerfile ;;
+              cart) DOCKERFILE_PATH=./src/cart/src/Dockerfile ;;
+              checkout) DOCKERFILE_PATH=./src/checkout/genproto/Dockerfile ;;
+              currency) DOCKERFILE_PATH=./src/currency/genproto/Dockerfile ;;
+              email) DOCKERFILE_PATH=./src/email/Dockerfile ;;
+              fraud-detection) DOCKERFILE_PATH=./src/fraud-detection/Dockerfile ;;
+              frontend) DOCKERFILE_PATH=./src/frontend/genproto/Dockerfile ;;
+              image-provider) DOCKERFILE_PATH=./src/image-provider/Dockerfile ;;
+              load-generator) DOCKERFILE_PATH=./src/load-generator/Dockerfile ;;
+              payment) DOCKERFILE_PATH=./src/payment/Dockerfile ;;
+              product-catalog) DOCKERFILE_PATH=./src/product-catalog/genproto/Dockerfile ;;
+              quote) DOCKERFILE_PATH=./src/quote/Dockerfile ;;
+              recommendation) DOCKERFILE_PATH=./src/recommendation/genproto/Dockerfile ;;
+              shipping) DOCKERFILE_PATH=./src/shipping/Dockerfile ;;
+              *) echo "❌ Unknown service: $SERVICE"; continue ;;
+            esac
+
+            echo "🔧 Building $SERVICE using $DOCKERFILE_PATH"
             docker build -t ${{ env.ECR_REPO }}:$TAG \
               -f $DOCKERFILE_PATH \
               --build-arg OTEL_JAVA_AGENT_VERSION=${{ env.OTEL_JAVA_AGENT_VERSION }} .
@@ -72,7 +91,7 @@ jobs:
       - name: Generate values-ecr.yaml for Helm
         run: |
           COMMIT=${{ github.sha }}
-          ECR_REPO=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.REGION }}.amazonaws.com/${{ env.APP_NAME }}
+          ECR_REPO=${{ env.ECR_REPO }}
           SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
 
           echo "# Auto-generated values file" > values-ecr.yaml
@@ -84,7 +103,6 @@ jobs:
             echo "    tag: $COMMIT-$SERVICE" >> values-ecr.yaml
             echo "" >> values-ecr.yaml
           done
-
           cat values-ecr.yaml
 
       - name: Deploy with Helm
