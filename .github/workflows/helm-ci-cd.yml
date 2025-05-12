@@ -1,0 +1,76 @@
+name: Helm CI/CD Pipeline with Tests (using ECR)
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  APP_NAME: opentelemetry-demo
+  IMAGE_TAG: ${{ github.sha }}
+  REGION: us-east-2
+  CLUSTER_NAME: otel-demo-cluster
+  NAMESPACE: helm-otel
+  RELEASE_NAME: otel-demo
+  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPO: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-2.amazonaws.com/opentelemetry-demo
+
+jobs:
+  ci-cd:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-2
+
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin ${{ env.ECR_REPO }}
+
+    - name: Build and Push Docker Image to ECR
+      run: |
+        docker build -t ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }} .
+        docker push ${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+
+    - name: Install Dependencies for Testing
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y make docker-compose
+
+    - name: Run Trace-Based Tests
+      run: |
+        make run-tracetesting
+
+    - name: Set up kubectl
+      run: |
+        echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+
+    - name: Set up Helm
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+        helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+        helm repo update
+
+    - name: Deploy with Helm
+      run: |
+        helm upgrade --install ${{ env.RELEASE_NAME }} open-telemetry/opentelemetry-demo \
+          --namespace ${{ env.NAMESPACE }} --create-namespace \
+          --set image.repository=${{ env.ECR_REPO }} \
+          --set image.tag=${{ env.IMAGE_TAG }}
+
+    - name: Validate Deployment
+      run: |
+        kubectl rollout status deployment/${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
+
+    - name: Rollback on Failure
+      if: failure()
+      run: |
+        helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
