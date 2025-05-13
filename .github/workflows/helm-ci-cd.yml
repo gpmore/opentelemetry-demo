@@ -81,9 +81,11 @@ jobs:
           helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
           helm repo update
 
-      - name: Install or Upgrade OpenTelemetry Demo
+      - name: Deploy OpenTelemetry Demo
+        id: helm_upgrade
         env:
           KUBECONFIG: kubeconfig
+        continue-on-error: true
         run: |
           helm upgrade --install ${{ env.RELEASE_NAME }} open-telemetry/opentelemetry-demo \
             --namespace ${{ env.NAMESPACE }} --create-namespace \
@@ -96,8 +98,9 @@ jobs:
           kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }}
 
       - name: Rollback on Failure
-        if: failure()
+        if: steps.helm_upgrade.outcome == 'failure'
         env:
           KUBECONFIG: kubeconfig
         run: |
+          echo "Helm deploy failed. Rolling back..."
           helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
