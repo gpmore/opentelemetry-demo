@@ -6,20 +6,32 @@ on:
       - main
 
 env:
-  APP_NAME: opentelemetry-demo
+  APP_NAME: ${{ vars.APP_NAME }}
+  REGION: ${{ vars.REGION }}
+  CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+  NAMESPACE: ${{ vars.NAMESPACE }}
+  RELEASE_NAME: ${{ vars.RELEASE_NAME }}
+  ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.REGION }}.amazonaws.com/${{ vars.APP_NAME }}
+  OTEL_JAVA_AGENT_VERSION: ${{ vars.OTEL_JAVA_AGENT_VERSION }}
   IMAGE_TAG: ${{ github.sha }}
-  REGION: us-east-2
-  CLUSTER_NAME: otel-demo-cluster
-  NAMESPACE: helm-otel
-  RELEASE_NAME: otel-demo
-  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-  ECR_REPO: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-2.amazonaws.com/opentelemetry-demo
-  OTEL_JAVA_AGENT_VERSION: 1.33.0
 
 jobs:
-  ci-cd:
+  checkout:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.extract_sha.outputs.sha }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
+      - name: Extract SHA
+        id: extract_sha
+        run: echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: checkout
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -39,10 +51,8 @@ jobs:
       - name: Build and Push All Service Images to ECR
         run: |
           SERVICES=(ad cart checkout currency email fraud-detection frontend image-provider load-generator payment product-catalog quote recommendation shipping)
-
           for SERVICE in "${SERVICES[@]}"; do
-            TAG="${{ github.sha }}-$SERVICE"
-
+            TAG="${{ env.IMAGE_TAG }}-$SERVICE"
             case "$SERVICE" in
               ad) DOCKERFILE_PATH=./src/ad/Dockerfile ;;
               cart) DOCKERFILE_PATH=./src/cart/src/Dockerfile ;;
@@ -60,20 +70,21 @@ jobs:
               shipping) DOCKERFILE_PATH=./src/shipping/Dockerfile ;;
               *) echo "❌ Unknown service: $SERVICE"; continue ;;
             esac
-
-            echo "🔧 Building $SERVICE using $DOCKERFILE_PATH"
             docker build -t ${{ env.ECR_REPO }}:$TAG \
               -f $DOCKERFILE_PATH \
               --build-arg OTEL_JAVA_AGENT_VERSION=${{ env.OTEL_JAVA_AGENT_VERSION }} .
             docker push ${{ env.ECR_REPO }}:$TAG
           done
 
-      - name: Generate kubeconfig from AWS
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    outputs:
+      outcome: ${{ steps.helm_upgrade.outcome }}
+    steps:
+      - name: Configure AWS and Generate kubeconfig
         run: |
           aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       - name: Set up Helm
         run: |
@@ -81,26 +92,36 @@ jobs:
           helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
           helm repo update
 
-      - name: Deploy OpenTelemetry Demo
+      - name: Deploy OpenTelemetry Demo using Helm
         id: helm_upgrade
+        continue-on-error: true
         env:
           KUBECONFIG: kubeconfig
-        continue-on-error: true
         run: |
           helm upgrade --install ${{ env.RELEASE_NAME }} open-telemetry/opentelemetry-demo \
             --namespace ${{ env.NAMESPACE }} --create-namespace \
             -f values.yaml
 
+  validate:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
       - name: Validate Deployment
         env:
           KUBECONFIG: kubeconfig
         run: |
+          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
           kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }}
 
-      - name: Rollback on Failure
-        if: steps.helm_upgrade.outcome == 'failure'
+  rollback:
+    if: needs.deploy.outputs.outcome == 'failure'
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Rollback Helm Release
         env:
           KUBECONFIG: kubeconfig
         run: |
-          echo "Helm deploy failed. Rolling back..."
+          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
+          echo "Helm deployment failed. Rolling back..."
           helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
