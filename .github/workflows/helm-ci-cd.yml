@@ -17,6 +17,7 @@ env:
 
 jobs:
   checkout:
+    name: Checkout
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.extract_sha.outputs.sha }}
@@ -29,6 +30,7 @@ jobs:
         run: echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
 
   build-and-push:
+    name: Build and Push Images to ECR
     runs-on: ubuntu-latest
     needs: checkout
     steps:
@@ -76,6 +78,7 @@ jobs:
           done
 
   deploy:
+    name: Deploy to EKS
     runs-on: ubuntu-latest
     needs: build-and-push
     outputs:
@@ -123,6 +126,7 @@ jobs:
             -f values.yaml
 
   validate:
+    name: Validate
     runs-on: ubuntu-latest
     needs: deploy
     steps:
@@ -144,6 +148,7 @@ jobs:
           kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }}
 
   rollback:
+    name: Rollback if Deployment Fails
     if: needs.deploy.outputs.outcome == 'failure'
     runs-on: ubuntu-latest
     needs: deploy
@@ -194,7 +199,7 @@ jobs:
       - name: Run Curl Smoke Test
         run: |
           curl -f http://localhost:8080 || (cat portforward_pid.txt | xargs kill && exit 1)
-          echo "✅ Test passed."
+          echo "\n ✅ Test passed."
 
       - name: Cleanup Port Forward
         if: always()
