@@ -104,6 +104,7 @@ jobs:
         env:
           KUBECONFIG: kubeconfig
         run: |
+          cd ${{ github.workspace }}
           helm upgrade --install ${{ env.RELEASE_NAME }} open-telemetry/opentelemetry-demo \
             --namespace ${{ env.NAMESPACE }} --create-namespace \
             -f values.yaml
