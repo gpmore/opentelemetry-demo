@@ -11,10 +11,9 @@ env:
   CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
   NAMESPACE: ${{ vars.NAMESPACE }}
   RELEASE_NAME: ${{ vars.RELEASE_NAME }}
-  ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-  ECR_REPO: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.REGION }}.amazonaws.com/${{ vars.APP_NAME }}
   OTEL_JAVA_AGENT_VERSION: ${{ vars.OTEL_JAVA_AGENT_VERSION }}
   IMAGE_TAG: ${{ github.sha }}
+  ECR_REPO: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.REGION }}.amazonaws.com/${{ vars.APP_NAME }}
 
 jobs:
   checkout:
@@ -82,7 +81,14 @@ jobs:
     outputs:
       outcome: ${{ steps.helm_upgrade.outcome }}
     steps:
-      - name: Configure AWS and Generate kubeconfig
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Generate kubeconfig
         run: |
           aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
 
@@ -106,11 +112,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy
     steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Generate kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
+
       - name: Validate Deployment
         env:
           KUBECONFIG: kubeconfig
         run: |
-          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
           kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }}
 
   rollback:
@@ -118,10 +134,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy
     steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Generate kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
+
       - name: Rollback Helm Release
         env:
           KUBECONFIG: kubeconfig
         run: |
-          aws eks update-kubeconfig --region ${{ env.REGION }} --name ${{ env.CLUSTER_NAME }} --kubeconfig kubeconfig
           echo "Helm deployment failed. Rolling back..."
           helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
