@@ -170,6 +170,8 @@ jobs:
         run: |
           echo "Helm deployment failed. Rolling back..."
           helm rollback ${{ env.RELEASE_NAME }} -n ${{ env.NAMESPACE }}
+          echo "Rollback History..."
+          helm history ${{ env.RELEASE_NAME }} --namespace ${{ env.NAMESPACE }}
   
   test:
     name: Run Smoke Tests

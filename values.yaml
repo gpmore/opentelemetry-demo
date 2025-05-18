@@ -25,7 +25,7 @@ default:
     pullPolicy: IfNotPresent
     pullSecrets: []
   # Default # of replicas for all components
-  replicas: 1
+  replicas: 3
   # default revisionHistoryLimit for all components (number of old ReplicaSets to retain)
   revisionHistoryLimit: 10
   # Default schedulingRules for all components
@@ -964,4 +964,3 @@ opensearch:
   resources:
     limits:
       memory: 1100Mi
-
